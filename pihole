@@ -68,6 +68,73 @@ SetWebPassword() {
     fi
 }
 
+AddDHCPStaticHostname() {
+    echo -e "  ${TICK} Adding static DHCP Hostname entry..."
+
+    local mac="${2}"
+    local ip="${3}"
+    local host="${4}"
+    local reload="${5}"
+    local dhcpstatichostnames="/etc/pihole/hosts/static-dhcp.list"
+    local dnsmasq_config="/etc/dnsmasq.d/99-pihole-static-dhcp.conf"
+
+    if [[ -z "${mac}" || -z "${ip}" || -z "${host}" ]]; then
+        echo "  ${CROSS} Missing arguments! Usage: pihole adddhcphostname <mac> <ip> <hostname>"
+        exit 1
+    fi
+
+    # Ensure the hosts directory exists
+    mkdir -p "$(dirname "${dhcpstatichostnames}")"
+
+    # Mac address will be used as a key to support RemoveDHCPStaticHostname
+    local domain
+    domain=$(getFTLConfigValue "dns.domain.name")
+
+    if [[ -n "${domain}" ]]; then
+        printf "#%s\n%s %s.%s %s\n" "${mac}" "${ip}" "${host}" "${domain}" "${host}" >> "${dhcpstatichostnames}"
+    else
+        printf "#%s\n%s %s\n" "${mac}" "${ip}" "${host}" >> "${dhcpstatichostnames}"
+    fi
+
+    # Ensure dnsmasq/FTL reads this file
+    if [[ ! -f "${dnsmasq_config}" ]]; then
+        echo "addn-hosts=${dhcpstatichostnames}" > "${dnsmasq_config}"
+    fi
+
+    # Restart dnsmasq to load new custom DNS entries only if $reload not false
+    if [[ ! "${reload}" == "false" ]]; then
+        reloadDNS "reload"
+    fi
+}
+
+RemoveDHCPStaticHostname() {
+    echo -e "  ${TICK} Removing static DHCP Hostname entry..."
+
+    local mac="${2}"
+    local reload="${3}"
+    local dhcpstatichostnames="/etc/pihole/hosts/static-dhcp.list"
+
+    if [[ -z "${mac}" ]]; then
+        echo "  ${CROSS} Missing MAC address!"
+        exit 1
+    fi
+
+    if [[ -f "${dhcpstatichostnames}" ]]; then
+        if [[ "$mac" =~ ^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$ ]]; then
+            # Remove the MAC comment and the next line (host entries)
+            sed -i "/^#${mac}/I,+1d" "${dhcpstatichostnames}"
+        else
+            echo "  ${CROSS} Invalid Mac Passed!"
+            exit 1
+        fi
+    fi
+
+    # Restart dnsmasq to load new custom DNS entries only if reload is not false
+    if [[ ! "${reload}" == "false" ]]; then
+        reloadDNS "reload"
+    fi
+}
+
 listFunc() {
   "${PI_HOLE_SCRIPT_DIR}"/list.sh "$@"
   exit 0
@@ -523,6 +590,8 @@ Options:
                         Add '-h' for more info on enable usage
   disable             Disable Pi-hole subsystems
                         Add '-h' for more info on disable usage
+  adddhcphostname     Add a static DHCP hostname entry for resolution
+  removedhcphostname  Remove a static DHCP hostname entry
   reloaddns           Update the lists and flush the cache without restarting the DNS server
   reloadlists         Update the lists WITHOUT flushing the cache or restarting the DNS server
   checkout            Switch Pi-hole subsystems to a different GitHub branch
@@ -565,6 +634,8 @@ case "${1}" in
   "-g" | "updateGravity"          ) need_root=true;;
   "reloaddns"                     ) need_root=true;;
   "reloadlists"                   ) need_root=true;;
+  "adddhcphostname"               ) need_root=true;;
+  "removedhcphostname"            ) need_root=true;;
   "setpassword"                   ) need_root=true;;
   "checkout"                      ) need_root=true;;
   "updatechecker"                 ) need_root=true;;
@@ -600,6 +671,8 @@ case "${1}" in
   "uninstall"                     ) uninstallFunc;;
   "reloaddns"                     ) reloadDNS "reload";;
   "reloadlists"                   ) reloadDNS "reload-lists";;
+  "adddhcphostname"               ) AddDHCPStaticHostname "$@";;
+  "removedhcphostname"            ) RemoveDHCPStaticHostname "$@";;
   "setpassword"                   ) SetWebPassword "$@";;
   "checkout"                      ) piholeCheckoutFunc "$@";;
   "updatechecker"                 ) shift; updateCheckFunc "$@";;
